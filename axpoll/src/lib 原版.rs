@@ -86,18 +86,18 @@ impl Inner {
         self.cursor == 0
     }
 
-    fn register(&mut self, waker: &Waker) -> Option<Waker> {
+    fn register(&mut self, waker: &Waker) {
         let slot = self.cursor % POLL_SET_CAPACITY;
-        let evicted = if self.cursor >= POLL_SET_CAPACITY {
+        if self.cursor >= POLL_SET_CAPACITY {//环满了，要驱逐
             let old = unsafe { self.entries[slot].assume_init_read() };
+            if !old.will_wake(waker) {
+                old.wake();//持锁唤醒旧 waker  ← 隐患
+            }
             self.cursor = ((slot + 1) % POLL_SET_CAPACITY) + POLL_SET_CAPACITY;
-            (!old.will_wake(waker)).then_some(old)
         } else {
             self.cursor += 1;
-            None
-        };
+        }
         self.entries[slot].write(waker.clone());
-        evicted
     }
 }
 
@@ -126,10 +126,7 @@ impl PollSet {
 
     /// Registers a waker.
     pub fn register(&self, waker: &Waker) {
-        let evicted = self.0.lock().register(waker);
-        if let Some(evicted) = evicted {
-            evicted.wake();
-        }
+        self.0.lock().register(waker);//拿 spin 锁，然后调用 Inner::register
     }
 
     /// Wakes up all registered wakers.

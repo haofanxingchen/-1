@@ -1,5 +1,5 @@
 //! A library for polling I/O events and waking up tasks.
-
+//此版本修复了死锁bug,尚未进行性能优化
 #![no_std]
 #![deny(missing_docs)]
 
@@ -99,18 +99,6 @@ impl Inner {
         self.entries[slot].write(waker.clone());
         evicted
     }
-
-    /// Moves all initialized wakers out into `buf`, resets the cursor, and
-    /// returns the number moved. The backing buffer is kept and reused, so
-    /// this performs no allocation.
-    fn take_all(&mut self, buf: &mut [MaybeUninit<Waker>; POLL_SET_CAPACITY]) -> usize {
-        let n = self.len();
-        for (dst, src) in buf.iter_mut().zip(&mut self.entries[..n]) {
-            *dst = core::mem::replace(src, MaybeUninit::uninit());
-        }
-        self.cursor = 0;
-        n
-    }
 }
 
 impl Drop for Inner {
@@ -146,20 +134,13 @@ impl PollSet {
 
     /// Wakes up all registered wakers.
     pub fn wake(&self) -> usize {
-        let mut buf: [MaybeUninit<Waker>; POLL_SET_CAPACITY] =
-            core::array::from_fn(|_| MaybeUninit::uninit());
-        let n = {
-            let mut guard = self.0.lock();
-            if guard.is_empty() {
-                return 0;
-            }
-            guard.take_all(&mut buf)
-        };
-        for entry in &mut buf[..n] {
-            let waker = unsafe { core::mem::replace(entry, MaybeUninit::uninit()).assume_init() };
-            waker.wake();
+        let mut guard = self.0.lock();
+        if guard.is_empty() {
+            return 0;
         }
-        n
+        let inner = core::mem::replace(&mut *guard, Inner::new());
+        drop(guard);
+        inner.len()
     }
 }
 

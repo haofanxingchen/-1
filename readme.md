@@ -11,6 +11,18 @@
     部分填充计数：注册 3 个 → wake() 返回 3、计数 == 3。
     并发压力：多线程 register + 另一线程 wake，断言无死锁/panic
 的测试（原代码通过）
+开始性能基准测试和性能改进,完成测试。
+基础结果：
+register (full set)      10.0 ns/op
+1 reg + wake()           51.0 ns/op
+64 reg + wake()         688.2 ns/op
+进行优化：
+把 wake() 从"每次排空都分配/释放 1KB"改成"复用缓冲区"：
+新增 Inner::take_all()：把已注册的 waker 移到栈上临时数组，重置 cursor，保留 Box 缓冲不释放。
+wake() 不再 Inner::new()，改为 take_all 后出锁再逐个唤醒（保持了之前修的"锁外唤醒"纪律）。
+register (full set)       9.1 ns/op
+1 reg + wake()           16.9 ns/op
+64 reg + wake()         629.6 ns/op
 
 
-之后计划，做性能测试，尝试提高性能
+之后计划，做进一步尝试提高性能
